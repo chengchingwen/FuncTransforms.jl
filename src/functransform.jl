@@ -47,8 +47,8 @@ function FuncTransform(
     match = method_by_ftype(fsig, method_tables, world)
     meth = match.method
     inst = Core.Compiler.specialize_method(match)
-    ci = get_codeinfo(meth, inst, world)
-    callercallback!(caller, inst)
+    ci = get_codeinfo(inst, world)
+    add_backedge!(caller, inst)
     Meta.partially_inline!(ci.code, Any[], meth.sig, Any[match.sparams...], 0, 0, :propagate)
     return FuncTransform(meth, inst, ci, fargs)
 end
