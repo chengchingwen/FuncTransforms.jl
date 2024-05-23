@@ -48,8 +48,8 @@ function FuncTransform(
     meth = match.method
     inst = Core.Compiler.specialize_method(match)
     ci = get_codeinfo(inst, world)
-    add_backedge!(caller, inst)
     Meta.partially_inline!(ci.code, Any[], meth.sig, Any[match.sparams...], 0, 0, :propagate)
+    add_backedge!(caller, inst)
     return FuncTransform(meth, inst, ci, fargs)
 end
 

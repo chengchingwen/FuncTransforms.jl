@@ -223,6 +223,16 @@ function FuncInfo(meth::Method, ci::CodeInfo)
     end
     return FuncInfo(pargs, va, min(ssavalues, 1), ssavalues, args, vars, codes)
 end
+function FuncInfo(
+    @nospecialize(fsig), world; method_tables::Union{Nothing, MethodTable, Vector{MethodTable}} = nothing
+)
+    match = method_by_ftype(fsig, method_tables, world)
+    meth = match.method
+    inst = Core.Compiler.specialize_method(match)
+    ci = get_codeinfo(inst, world)
+    Meta.partially_inline!(ci.code, Any[], meth.sig, Any[match.sparams...], 0, 0, :propagate)
+    return FuncInfo(meth, ci)
+end
 
 newslotnumber(fi::FuncInfo) = length(fi.args) + length(fi.vars) + 1
 newssavalue(fi::FuncInfo) = length(fi.codes.id2stmtflagloc) + 1
