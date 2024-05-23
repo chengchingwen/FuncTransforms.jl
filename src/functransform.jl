@@ -24,7 +24,10 @@ struct FuncTransform
     # transform
     fargs::Vector{FuncArgs}
     fi::FuncInfo
-    function FuncTransform(meth::Method, inst::MethodInstance, ci::CodeInfo, fargs)
+    function FuncTransform(meth::Method, inst::MethodInstance, ci::CodeInfo, fargs = nothing)
+        if isnothing(fargs)
+            fargs = FuncArgs[FA(name, i) for (i, name) in zip(1:meth.nargs, ci.slotnames)]
+        end
         nva = count(arg->arg isa VA, fargs)
         if nva == 1
             !isa(last(fargs), VA) && error("Vararg must be the last argument")
@@ -40,7 +43,7 @@ struct FuncTransform
     end
 end
 function FuncTransform(
-    @nospecialize(fsig), world, fargs::Vector;
+    @nospecialize(fsig), world, fargs = nothing;
     caller::Union{MethodInstance, Nothing} = nothing,
     method_tables::Union{Nothing, MethodTable, Vector{MethodTable}} = nothing
 )
@@ -55,7 +58,7 @@ end
 
 function updateargs!(ft::FuncTransform)
     unseen = BitSet(ft.fi.pargs)
-    hasva(ft.fi) && push!(unseen, getva(ft.fi))
+    hasva(ft.fi) && push!(unseen, getva(ft.fi).id)
     for (i, arg) in enumerate(ft.fargs)
         updatearg!(ft, arg, i, unseen)
     end
@@ -68,16 +71,18 @@ function updatearg!(ft::FuncTransform, arg::NA, i, unseen)
 end
 function updatearg!(ft::FuncTransform, arg::FA, i, unseen)
     id = arg.slotnumber
-    deleteparg!(ft.fi, id)
-    insertparg!(ft.fi, id, i)
+    if getva(ft.fi).id != id
+        deleteparg!(ft.fi, id)
+        insertparg!(ft.fi, id, i)
+    end
     renamearg!(ft.fi, id, arg.name)
     delete!(unseen, id)
     return unseen
 end
 function updatearg!(ft::FuncTransform, arg::VA, i, unseen)
-    va = getva(ft.fi)
+    va = getva(ft.fi).id
     !iszero(va) && delete!(unseen, va)
-    newva = addva!(ft.fi, arg.name)
+    newva = addva!(ft.fi, arg.name).id
     index = 1
     for id = 1:ft.meth.nargs
         if id == va

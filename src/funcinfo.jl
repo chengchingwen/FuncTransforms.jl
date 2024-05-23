@@ -296,11 +296,11 @@ function addva!(fi::FuncInfo, name::Symbol, flag::Integer = SLOT_USED, id::SlotI
     id = addarg!(fi, name, flag, id)
     return setva!(fi, id)
 end
-getva(fi::FuncInfo) = fi.va
+getva(fi::FuncInfo) = SlotNumber(fi.va)
 function setva!(fi::FuncInfo, id::SlotID)
     id = _id(id)
     fi.va = id
-    return id
+    return SlotNumber(id)
 end
 
 firstssavalue(fi::FuncInfo) = fi.first
@@ -400,7 +400,7 @@ function toCodeInfo(fi::FuncInfo, ci::Union{CodeInfo, Nothing} = nothing; inline
         slotremap[id] = slotnumber
     end
     if hasva(fi)
-        id = getva(fi)
+        id = getva(fi).id
         name, flag = fi.args[id]
         push!(fargs, name)
         push!(slotnames, name)
