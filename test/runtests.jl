@@ -32,6 +32,34 @@ macro resultshow(a, val, ex)
 end
 
 @testset "FuncTransforms.jl" begin
+    function f(::Type{T}, ::Type, a, b, c, d...) where T
+        z = sum(d)
+        return a + b + c + z
+    end
+    fi = FuncInfo(Tuple{typeof(f), Type{Int}, Type{Float32}, Int, Int, Int, Int, Int}, Base.get_world_counter())
+    @test length(fi.pargs) == 6 # "self", "unused", "unused, :a, :b, :c
+    @test FuncTransforms.hasva(fi)
+    @test length(fi.args) == 7 # pargs + va
+    @test length(fi.vars) == 1
+    @test haskey(fi.args, :a)
+    @test haskey(fi.args, :d)
+    @test !haskey(fi.args, :T)
+    @test !haskey(fi.args, :z)
+    @test !haskey(fi.vars, :a)
+    @test haskey(fi.vars, :z)
+
+    ci = FuncTransforms.create_codeinfo(@__MODULE__, [], quote end; inline = true)
+    @test ci.inlining == 1
+    @test !ci.propagate_inbounds
+    ci = FuncTransforms.create_codeinfo(@__MODULE__, [], quote end; propagate_inbounds = true)
+    @test ci.inlining == 1
+    @test ci.propagate_inbounds
+    ci = FuncTransforms.create_codeinfo(@__MODULE__, [], quote end; noinline = true)
+    @test ci.inlining == 2
+    @test !ci.propagate_inbounds
+    @test_throws AssertionError FuncTransforms.create_codeinfo(@__MODULE__, [], quote end; noinline = true, inline = true)
+    @test_throws AssertionError FuncTransforms.create_codeinfo(@__MODULE__, [], quote end; noinline = true, propagate_inbounds = true)
+
     @testset "Contextual" begin
         using .Contextual
         using .Contextual: withctx, Context
