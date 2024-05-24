@@ -34,7 +34,8 @@ function (g::WithCtxGenerator)(world, source, self, ctx, func, args)
         witharg = getparg(ft.fi, 1)
         ctxarg = getparg(ft.fi, 2)
     end
-    for (ssavalue, stmt, flag, loc) in FuncInfoIter(ft.fi, 1)
+    for (ssavalue, code) in FuncInfoIter(ft.fi, 1)
+        stmt = code.stmt
         if descend && isexpr(stmt, :call)
             callee = resolve(stmt.args[1])
             if callee isa Core.Builtin || callee isa Type{Core.TypeVar}
@@ -47,7 +48,7 @@ function (g::WithCtxGenerator)(world, source, self, ctx, func, args)
             else
                 newstmt = Expr(:call, witharg, ctxarg, stmt.args...)
             end
-            replacestmt!(ft.fi, ssavalue, newstmt, flag, loc)
+            code.stmt = newstmt
         end
     end
     ci = toCodeInfo(ft)

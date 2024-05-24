@@ -3,6 +3,17 @@ using Test
 
 include("contextual.jl")
 
+macro isinferred(ex)
+    esc(quote
+        try
+            @inferred $ex
+            true
+        catch err
+            @error err
+            isa(err, ErrorException) ? false : rethrow(err)
+        end
+    end)
+end
 macro resultshow(a, val, ex)
     expr_str = sprint(Base.show_unquoted, ex)
     expr = Symbol(expr_str)
@@ -44,7 +55,11 @@ end
         @resultshow a_cpu tan(2 * 0.7) / 2 withctx(Sin2Cos(), bar, a_cpu, 0.7)
         @resultshow a_cpu tan(2 * 0.7) / 2 baz(a_cpu, 0.7)
         @resultshow a_cpu tan(0.3) qux(a_cpu, 0.3)
-        Base.delete_method(methods(Contextual.ctxcall, Tuple{Sin2Cos, typeof(sin), Any})[1])
+        ms = methods(Contextual.ctxcall, Tuple{Sin2Cos, typeof(sin), Any})
+        while length(ms) != 0
+            Base.delete_method(ms[1])
+            ms = methods(Contextual.ctxcall, Tuple{Sin2Cos, typeof(sin), Any})
+        end
         println("\ndelete:")
         @resultshow a_cpu sin(2 * 0.7) / 2 withctx(Sin2Cos(), bar, a_cpu, 0.7)
         @resultshow a_cpu sin(2 * 0.7) / 2 baz(a_cpu, 0.7)
@@ -61,8 +76,8 @@ end
         @resultshow a_cpu sin(0.7) + cos(0.7) baz(a_cpu, 0.7)
         @resultshow a_cpu sin(0.3) qux(a_cpu, 0.3)
 
-        @inferred withctx(Sin2Cos(), x->hcat(x,x)[1], [8,9,99])
-        @inferred withctx(Sin2Cos(), sort!, [3,1,2])
+        @test @isinferred withctx(Sin2Cos(), x->hcat(x,x)[1], [8,9,99])
+        @test @isinferred withctx(Sin2Cos(), sort!, [3,1,2])
         @test withctx(Sin2Cos(), sort!, [3,1,2]) == [1,2,3]
     end
 end
