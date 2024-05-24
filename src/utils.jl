@@ -4,12 +4,19 @@ using Base.Meta: isexpr
 create_codeinfo(argnames, body; kws...) = create_codeinfo(argnames, nothing, body; kws...)
 create_codeinfo(mod::Module, argnames, body; kws...) = create_codeinfo(mod, argnames, nothing, body; kws...)
 create_codeinfo(argnames, spnames, body; kws...) = create_codeinfo(@__MODULE__, argnames, spnames, body; kws...)
-function create_codeinfo(mod::Module, argnames, spnames, body; inline = false)
+function create_codeinfo(mod::Module, argnames, spnames, body;
+                         inline = false, noinline = false, propagate_inbounds = false)
     # argnames: `Vector{Symbol}` representing the variable names, starts with `Symbol("#self#")`.
     # spnames: the variable names in `where {...}`
     @assert isexpr(body, :block) "body should be `Expr(:block, ...)`."
-    if inline # insert inline tag to body
+    @assert nand(inline, noinline)
+    @assert nand(propagate_inbounds, noinline)
+    if propagate_inbounds
+        body = Expr(:block, Expr(:meta, :inline, :propagate_inbounds), body.args...)
+    elseif inline
         body = Expr(:block, Expr(:meta, :inline), body.args...)
+    elseif noinline
+        body = Expr(:block, Expr(:meta, :noinline), body.args...)
     end
     expr = Expr(:lambda, argnames, Expr(Symbol("scope-block"), body))
     if !isnothing(spnames)

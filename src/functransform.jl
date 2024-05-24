@@ -103,8 +103,8 @@ function updatearg!(ft::FuncTransform, arg::VA, i, unseen)
     return unseen
 end
 
-function toCodeInfo(ft::FuncTransform; inline = false)
-    ci = toCodeInfo(ft.fi, ft.ci; inline)
+function toCodeInfo(ft::FuncTransform; inline = false, noinline = false, propagate_inbounds = false)
+    ci = toCodeInfo(ft.fi, ft.ci; inline, noinline, propagate_inbounds)
     ci.method_for_inference_limit_heuristics = ft.meth
     return ci
 end

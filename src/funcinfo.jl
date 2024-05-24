@@ -3,7 +3,12 @@ using Base: SLOT_USED
 
 const SlotFlagType = eltype(fieldtype(CodeInfo, :slotflags))
 const SSAFlagType = eltype(fieldtype(CodeInfo, :ssaflags))
-const CodeLocType = eltype(fieldtype(CodeInfo, :codelocs))
+const HAS_DEBUGINFO = isdefined(Core, :DebugInfo)
+@static if HAS_DEBUGINFO
+    const CodeLocType = Any
+else
+    const CodeLocType = eltype(fieldtype(CodeInfo, :codelocs))
+end
 
 const SlotID = Union{Int, SlotNumber}
 const SSAID = Union{Int, SSAValue}
@@ -123,10 +128,14 @@ mutable struct Code
     flag::SSAFlagType
     loc::CodeLocType
 end
-Code(@nospecialize(stmt::Any), flag::Integer) = Code(stmt, flag, zero(CodeLocType))
+Code(@nospecialize(stmt::Any), flag::Integer) = Code(stmt, flag, 0)
 Code(@nospecialize(stmt::Any)) = Code(stmt, IR_FLAG_NULL)
-_code(val::Code) = (val.stmt, val.flag, val.loc)
-_code(val) = val
+Base.getindex(c::Code, i) = getfield(c, i)
+Base.iterate(c::Code, s=1) = s > 3 ? nothing : (c[s], s+1)
+
+inlineflag!(c::Code) = (c.flag |= IR_FLAG_INLINE; nothing)
+noinlineflag!(c::Code) = (c.flag |= IR_FLAG_NOINLINE; nothing)
+inboundsflag!(c::Code) = (c.flag |= IR_FLAG_INBOUNDS; nothing)
 
 struct CodeBlock
     id2stmtflagloc::Dict{Int, Code}
@@ -153,9 +162,9 @@ function setprev!(codes::CodeBlock, id::SSAID, prev::SSAID)
     return prev2
 end
 Base.length(codes::CodeBlock) = length(codes.order)
-Base.getindex(codes::CodeBlock, id::SSAID) = _code(getcode(codes, id))
+Base.getindex(codes::CodeBlock, id::SSAID) = getcode(codes, id)
 Base.haskey(codes::CodeBlock, id::SSAID) = haskey(codes.id2stmtflagloc, _id(id))
-Base.get(codes::CodeBlock, id::SSAID, default) = _code(get(codes.id2stmtflagloc, _id(id), default))
+Base.get(codes::CodeBlock, id::SSAID, default) = get(codes.id2stmtflagloc, _id(id), default)
 function Base.delete!(codes::CodeBlock, id::SSAID)
     id = _id(id)
     delete!(codes.id2stmtflagloc, id)
@@ -172,7 +181,7 @@ function _setindex!(codes::CodeBlock, @nospecialize(stmtflagloc::Tuple), id::SSA
         code = Code(stmtflagloc...)
         setcode!(codes, id, code)
     end
-    return _code(code)
+    return code
 end
 Base.setindex!(codes::CodeBlock, @nospecialize(stmtflagloc::Tuple{Any, Integer, Integer}), id::SSAID) =  _setindex!(codes, stmtflagloc, id)
 Base.setindex!(codes::CodeBlock, @nospecialize(stmtflag::Tuple{Any, Integer}), id::SSAID) = _setindex!(codes, stmtflag, id)
@@ -186,7 +195,7 @@ CodeIter(codes::CodeBlock, start::SSAValue) = CodeIter(codes, _id(start))
 function Base.iterate(iter::CodeIter, ssavalue = iter.start)
     !haskey(iter.codes.order, ssavalue) && return nothing
     nextssa = getnext(iter.codes, ssavalue)
-    return ((ssavalue, iter.codes[ssavalue]...), ssavalue == nextssa ? 0 : nextssa)
+    return ((ssavalue, iter.codes[ssavalue]), ssavalue == nextssa ? 0 : nextssa)
 end
 
 # In FuncInfo, we give the id of `SlotNumber`/`SSAValue` a different meaning as the unique id instead of index.
@@ -204,16 +213,28 @@ end
 function FuncInfo(meth::Method, ci::CodeInfo)
     args = Slots()
     vars = Slots()
-    nargs = meth.nargs
-    isva = meth.isva
+    @static if hasfield(CodeInfo, :nargs)
+        nargs = ci.nargs
+        isva = ci.isva
+    else
+        nargs = meth.nargs
+        isva = meth.isva
+    end
     pargs = collect(1:nargs - isva)
     va = isva ? nargs : 0
     for (slotnumber, (name, flag)) in enumerate(zip(ci.slotnames, ci.slotflags))
         (slotnumber <= nargs ? args : vars)[slotnumber] = (name, flag)
     end
-    codes = CodeBlock(ismutable(ci.linetable) ? copy(ci.linetable) : ci.linetable)
-    for (ssavalue, code_flag_loc) in enumerate(zip(ci.code, ci.ssaflags, ci.codelocs))
-        codes[ssavalue] = code_flag_loc
+    @static if HAS_DEBUGINFO
+        codes = CodeBlock(nothing)
+        for (ssavalue, code_flag) in enumerate(zip(ci.code, ci.ssaflags))
+            codes[ssavalue] = code_flag
+        end
+    else
+        codes = CodeBlock(ismutable(ci.linetable) ? copy(ci.linetable) : ci.linetable)
+        for (ssavalue, code_flag_loc) in enumerate(zip(ci.code, ci.ssaflags, ci.codelocs))
+            codes[ssavalue] = code_flag_loc
+        end
     end
     ssavalues = length(ci.code)
     for ssavalue in 1:ssavalues
@@ -322,17 +343,15 @@ function replacestmt!(fi::FuncInfo, id::SSAID, stmtflagloc...)
     @assert haskey(fi.codes, id) "ssa($id) not found in codes"
     fi.codes[id] = stmtflagloc
 end
-function addstmt!(fi::FuncInfo, @nospecialize(stmt::Any), flag::Integer = IR_FLAG_NULL, loc::Integer = zero(CodeLocType), id::SSAID = newssavalue(fi))
+function addstmt!(fi::FuncInfo, @nospecialize(stmt::Any), flag = IR_FLAG_NULL, loc = 0, id::SSAID = newssavalue(fi))
     id = _id(id)
     fi.codes[id] = (stmt, flag, loc)
     return SSAValue(id)
 end
-addstmtafter!(fi::FuncInfo, id::SSAID, @nospecialize(stmt::Any), flag::Integer = IR_FLAG_NULL,
-              loc::Integer = zero(CodeLocType), stmtid::SSAID = newssavalue(fi)) =
-                  insertafter!(fi, id, addstmt!(fi, stmt, flag, loc, stmtid))
-addstmtbefore!(fi::FuncInfo, id::SSAID, @nospecialize(stmt::Any), flag::Integer = IR_FLAG_NULL,
-               loc::Integer = zero(CodeLocType), stmtid::SSAID = newssavalue(fi)) =
-                   insertbefore!(fi, id, addstmt!(fi, stmt, flag, loc, stmtid))
+addstmtafter!(fi::FuncInfo, id::SSAID, @nospecialize(stmt::Any), flag = IR_FLAG_NULL, loc = 0,
+              stmtid::SSAID = newssavalue(fi)) = insertafter!(fi, id, addstmt!(fi, stmt, flag, loc, stmtid))
+addstmtbefore!(fi::FuncInfo, id::SSAID, @nospecialize(stmt::Any), flag = IR_FLAG_NULL, loc = 0,
+               stmtid::SSAID = newssavalue(fi)) = insertbefore!(fi, id, addstmt!(fi, stmt, flag, loc, stmtid))
 
 function insertafter!(fi::FuncInfo, id::SSAID, stmtid::SSAID)
     # id -> next => id -> stmtid -> next
@@ -387,7 +406,8 @@ end
 
 FuncInfoIter(fi::FuncInfo, start::SSAID = firstssavalue(fi)) = CodeIter(fi.codes, _id(start))
 
-function toCodeInfo(fi::FuncInfo, ci::Union{CodeInfo, Nothing} = nothing; inline = false)
+function toCodeInfo(fi::FuncInfo, ci::Union{CodeInfo, Nothing} = nothing;
+                    inline = false, noinline = false, propagate_inbounds = false)
     fargs = Symbol[]
     slotnames = Any[]
     slotflags = UInt8[]
@@ -414,19 +434,38 @@ function toCodeInfo(fi::FuncInfo, ci::Union{CodeInfo, Nothing} = nothing; inline
         slotremap[id] = offset + i
     end
     if isnothing(ci)
-        ci = create_codeinfo(fargs, Expr(:block); inline)
+        ci = create_codeinfo(fargs, Expr(:block); inline, noinline, propagate_inbounds)
     else
         ci = copy(ci)
+        @assert nand(inline, noinline)
+        @assert nand(propagate_inbounds, noinline)
+        if propagate_inbounds
+            ci.inlining = 0x01
+            ci.propagate_inbounds = true
+        elseif inline
+            ci.inlining = 0x01
+        elseif noinline
+            ci.inlining = 0x02
+        end
+    end
+    @static if hasfield(CodeInfo, :nargs)
+        ci.nargs = length(fi.pargs) + hasva(fi)
+        ci.isva = hasva(fi)
     end
     code = Any[]
     ssaflags = UInt8[]
-    codelocs = fieldtype(CodeInfo, :codelocs)()
+    @static if !HAS_DEBUGINFO
+        codelocs = fieldtype(CodeInfo, :codelocs)()
+    end
     ssaremap = Dict{Int, Int}()
     ssavalues = length(fi.codes)
-    for (ssavalue, (id, stmt, flag, loc)) in enumerate(FuncInfoIter(fi))
+    for (ssavalue, (id, stmtflagloc)) in enumerate(FuncInfoIter(fi))
+        stmt, flag, loc = stmtflagloc
         push!(code, stmt)
         push!(ssaflags, flag)
-        push!(codelocs, loc)
+        @static if !HAS_DEBUGINFO
+            push!(codelocs, loc)
+        end
         ssaremap[id] = ssavalue
     end
     for (ssavalue, stmt) in enumerate(code)
@@ -450,7 +489,9 @@ function toCodeInfo(fi::FuncInfo, ci::Union{CodeInfo, Nothing} = nothing; inline
     ci.code = code
     ci.ssaflags = ssaflags
     ci.ssavaluetypes = ssavalues
-    ci.codelocs = codelocs
-    ci.linetable = fi.codes.linetable
+    @static if !HAS_DEBUGINFO
+        ci.codelocs = codelocs
+        ci.linetable = fi.codes.linetable
+    end
     return ci
 end
