@@ -5,7 +5,7 @@ using Core.Compiler: specialize_method
 using Base.Meta: isexpr
 
 using FuncTransforms
-using FuncTransforms: create_codeinfo, method_by_ftype, lookup_method, walk, resolve
+using FuncTransforms: create_codeinfo, method_by_ftype, lookup_method, walk, resolve, inlineflag!, add_ci_edges!
 
 struct WithCtxGenerator{MT<:Union{Nothing, MethodTable, Vector{MethodTable}}}
     overlay_tables::MT
@@ -52,8 +52,11 @@ function (g::WithCtxGenerator)(world, source, self, ctx, func, args)
         end
     end
     ci = toCodeInfo(ft)
-    mt_edges = Core.Compiler.vect(typeof(ctxcall).name.mt, Tuple{typeof(ctxcall), ctx, func, Vararg{Any}})
-    ci.edges = mt_edges
+    @static if VERSION < v"1.12.0-DEV.1531"
+        add_ci_edges!(ci, typeof(ctxcall).name.mt, Tuple{typeof(ctxcall), ctx, func, Vararg{Any}})
+    else
+        add_ci_edges!(ci, Tuple{typeof(ctxcall), ctx, func, Vararg{Any}}, typeof(ctxcall).name.mt)
+    end
     return ci
 end
 

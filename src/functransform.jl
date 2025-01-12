@@ -52,7 +52,12 @@ function FuncTransform(
     inst = Core.Compiler.specialize_method(match)
     ci = get_codeinfo(inst, world)
     Meta.partially_inline!(ci.code, Any[], meth.sig, Any[match.sparams...], 0, 0, :propagate)
-    add_backedge!(caller, inst)
+    @static if VERSION < v"1.12.0-DEV.1531"
+        add_backedge!(caller, inst)
+    else
+        # caller is ignored, assuming caller is the same function that returned this transformed code info
+        add_ci_edges!(ci, inst)
+    end
     return FuncTransform(meth, inst, ci, fargs)
 end
 
