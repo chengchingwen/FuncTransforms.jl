@@ -59,49 +59,57 @@ function method_by_ftype(@nospecialize(fsig::Type), @nospecialize(mt::Union{Meth
 end
 method_by_ftype(@nospecialize(fsig::Type), @nospecialize(::Nothing), world) = only(Base._methods_by_ftype(fsig, -1, world))
 
+function add_ci_edges!(ci::CodeInfo, edges...)
+    old_edge = isdefined(ci, :edges) && !isnothing(ci.edges) ? ci.edges : Core.svec()
+    ci.edges = Any[old_edge..., edges...]
+    return nothing
+end
+
 function get_codeinfo(inst::MethodInstance, world)
     ci = Core.Compiler.retrieve_code_info(inst, world)
     isnothing(ci) && error("Could not get codeinfo for ", inst)
     return copy(ci)
 end
 
-# `func` is not directly called, so we need to set the backedges manually so that change of `func`
-#  trigger recompilation. On Julia below v1.11, GPUCompiler use a callback for invalidations, but the callback
-#  might not be set for `func`, so we add our callback to trigger the callback of the caller.
-function add_backedge!(caller::Union{MethodInstance, Nothing}, inst::MethodInstance)
-    isnothing(caller) && return
-    @static if VERSION < v"1.11.0-DEV.1552"
-        callercallback!(caller, inst)
-    end
-    ccall(:jl_method_instance_add_backedge, Cvoid, (Any, Any, Any), inst, nothing, caller)
-    return
-end
-@static if VERSION < v"1.11.0-DEV.1552"
-    struct CallerCallback
-        caller::MethodInstance
-    end
-    function (callback::CallerCallback)(replaced::MethodInstance, max_world,
-                                        seen::Set{MethodInstance} = Set{MethodInstance}())
-        push!(seen, replaced)
-        # run callback of caller
-        caller = callback.caller
-        isdefined(caller, :callbacks) || return
-        for cb in caller.callbacks
-            cb(caller, max_world, seen)
-        end
-        return
-    end
-    function callercallback!(caller::Union{MethodInstance, Nothing}, inst::MethodInstance)
+@static if VERSION < v"1.12.0-DEV.1531"
+    # `func` is not directly called, so we need to set the backedges manually so that change of `func`
+    #  trigger recompilation. On Julia below v1.11, GPUCompiler use a callback for invalidations, but the callback
+    #  might not be set for `func`, so we add our callback to trigger the callback of the caller.
+    function add_backedge!(caller::Union{MethodInstance, Nothing}, inst::MethodInstance)
         isnothing(caller) && return
-        cb = CallerCallback(caller)
-        hascallbacks = isdefined(inst, :callbacks)
-        if hascallbacks
-            callbacks = inst.callbacks
-            isnothing(findfirst(==(cb), callbacks)) || return
-            push!(callbacks, cb)
-        else
-            inst.callbacks = Any[cb]
+        @static if VERSION < v"1.11.0-DEV.1552"
+            callercallback!(caller, inst)
         end
+        ccall(:jl_method_instance_add_backedge, Cvoid, (Any, Any, Any), inst, nothing, caller)
         return
+    end
+    @static if VERSION < v"1.11.0-DEV.1552"
+        struct CallerCallback
+            caller::MethodInstance
+        end
+        function (callback::CallerCallback)(replaced::MethodInstance, max_world,
+                                            seen::Set{MethodInstance} = Set{MethodInstance}())
+            push!(seen, replaced)
+            # run callback of caller
+            caller = callback.caller
+            isdefined(caller, :callbacks) || return
+            for cb in caller.callbacks
+                cb(caller, max_world, seen)
+            end
+            return
+        end
+        function callercallback!(caller::Union{MethodInstance, Nothing}, inst::MethodInstance)
+            isnothing(caller) && return
+            cb = CallerCallback(caller)
+            hascallbacks = isdefined(inst, :callbacks)
+            if hascallbacks
+                callbacks = inst.callbacks
+                isnothing(findfirst(==(cb), callbacks)) || return
+                push!(callbacks, cb)
+            else
+                inst.callbacks = Any[cb]
+            end
+            return
+        end
     end
 end

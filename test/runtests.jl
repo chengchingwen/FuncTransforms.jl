@@ -22,10 +22,11 @@ macro resultshow(a, val, ex)
 	expr_str = expr_str[last(linfo)+1:end]
     end
     return quote
-	@time $(esc(ex))
+        @time $(string("1st ", expr_str)) $(esc(ex))
+	$expr = collect($(esc(a)))[]
+        @time $(string("2nd ", expr_str)) $(esc(ex))
 	print($expr_str)
 	print(" = ")
-	$expr = collect($(esc(a)))[]
 	println($expr)
 	@test $expr ≈ $val
     end
@@ -65,9 +66,9 @@ end
         using .Contextual: withctx, Context
         struct Sin2Cos <: Context end
         foo(x) = sin(2 * x) / 2
-        bar(a, x) = (a[1] = foo(x); return)
+        bar(a, x) = (@inbounds a[1] = foo(x); return)
         baz(a, x) = (withctx(Sin2Cos(), bar, a, x); return)
-        qux(a, x) = (a[1] = withctx(Sin2Cos(), sin, x); return)
+        qux(a, x) = (@inbounds a[1] = withctx(Sin2Cos(), sin, x); return)
         a_cpu = Float32[0]
         println("\nbefore:")
         @resultshow a_cpu sin(2 * 0.7) / 2 withctx(Sin2Cos(), bar, a_cpu, 0.7)
@@ -83,15 +84,25 @@ end
         @resultshow a_cpu tan(2 * 0.7) / 2 withctx(Sin2Cos(), bar, a_cpu, 0.7)
         @resultshow a_cpu tan(2 * 0.7) / 2 baz(a_cpu, 0.7)
         @resultshow a_cpu tan(0.3) qux(a_cpu, 0.3)
-        ms = methods(Contextual.ctxcall, Tuple{Sin2Cos, typeof(sin), Any})
-        while length(ms) != 0
-            Base.delete_method(ms[1])
-            ms = methods(Contextual.ctxcall, Tuple{Sin2Cos, typeof(sin), Any})
+        Base.delete_method(first(methods(Contextual.ctxcall, Tuple{Sin2Cos, typeof(sin), Any})))
+        @static isdefined(Core, Symbol("@latestworld")) && Core.@latestworld
+        @static if VERSION < v"1.12.0-DEV"
+            println("\ndelete:")
+            @resultshow a_cpu sin(2 * 0.7) / 2 withctx(Sin2Cos(), bar, a_cpu, 0.7)
+            @resultshow a_cpu sin(2 * 0.7) / 2 baz(a_cpu, 0.7)
+            @resultshow a_cpu sin(0.3) qux(a_cpu, 0.3)
+        else
+            println("\ndelete0:")
+            @resultshow a_cpu cos(2 * 0.7) / 2 withctx(Sin2Cos(), bar, a_cpu, 0.7)
+            @resultshow a_cpu cos(2 * 0.7) / 2 baz(a_cpu, 0.7)
+            @resultshow a_cpu cos(0.3) qux(a_cpu, 0.3)
+            Base.delete_method(first(methods(Contextual.ctxcall, Tuple{Sin2Cos, typeof(sin), Any})))
+            @static isdefined(Core, Symbol("@latestworld")) && Core.@latestworld
+            println("\ndelete1:")
+            @resultshow a_cpu sin(2 * 0.7) / 2 withctx(Sin2Cos(), bar, a_cpu, 0.7)
+            @resultshow a_cpu sin(2 * 0.7) / 2 baz(a_cpu, 0.7)
+            @resultshow a_cpu sin(0.3) qux(a_cpu, 0.3)
         end
-        println("\ndelete:")
-        @resultshow a_cpu sin(2 * 0.7) / 2 withctx(Sin2Cos(), bar, a_cpu, 0.7)
-        @resultshow a_cpu sin(2 * 0.7) / 2 baz(a_cpu, 0.7)
-        @resultshow a_cpu sin(0.3) qux(a_cpu, 0.3)
         Contextual.ctxcall(ctx::Sin2Cos, ::typeof(foo), x) = sin(x) + withctx(ctx, cos, x)
         Contextual.ctxcall(ctx::Sin2Cos, ::typeof(cos), x) = tan(x)
         println("\nafter2:")
