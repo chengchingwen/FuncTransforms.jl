@@ -1,7 +1,7 @@
 name = "FuncTransforms"
 uuid = "79abecb7-a74d-442d-bb0e-6136fbda6b73"
 authors = ["chengchingwen <chengchingwen214@gmail.com> and contributors"]
-version = "0.1.0"
+version = "0.1.1"
 
 [compat]
 julia = "1.10"
